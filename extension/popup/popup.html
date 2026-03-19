@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DirectoryApply</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>DirectoryApply</h1>
+      <span id="status-badge" class="badge idle">idle</span>
+    </header>
+
+    <!-- Config Section -->
+    <section id="config-section" class="collapsible">
+      <button class="section-toggle" data-target="config-body">⚙ Configuration</button>
+      <div id="config-body" class="section-body">
+        <div class="field">
+          <label>Worker URL <small>(leave empty for direct API)</small></label>
+          <input type="url" id="cfg-worker-url" placeholder="https://directory-apply-worker.you.workers.dev" />
+        </div>
+        <div class="field">
+          <label>Worker Token <small>(optional, must match DA_WORKER_TOKEN secret)</small></label>
+          <input type="password" id="cfg-worker-token" placeholder="bearer token" />
+        </div>
+        <div class="field">
+          <label>AI Provider</label>
+          <select id="cfg-ai-provider">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai">OpenAI (GPT)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>AI API Key</label>
+          <input type="password" id="cfg-ai-key" placeholder="sk-..." />
+        </div>
+        <div class="field">
+          <label>Model</label>
+          <input type="text" id="cfg-model" placeholder="claude-sonnet-4-20250514" />
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Delay (ms)</label>
+            <input type="number" id="cfg-delay" value="1000" min="200" max="10000" />
+          </div>
+          <div class="field">
+            <label>Min Score</label>
+            <input type="number" id="cfg-min-score" value="40" min="0" max="100" />
+          </div>
+          <div class="field">
+            <label>Max Companies</label>
+            <input type="number" id="cfg-max-companies" value="0" min="0" placeholder="0 = all" />
+          </div>
+        </div>
+        <button id="btn-save-config" class="btn btn-sm">Save Config</button>
+      </div>
+    </section>
+
+    <!-- Step Testing Section -->
+    <section id="test-section" class="collapsible">
+      <button class="section-toggle" data-target="test-body">🧪 Step-by-Step Testing</button>
+      <div id="test-body" class="section-body">
+        <button class="btn btn-outline btn-full" data-step="1">1. Extract Algolia Config</button>
+        <button class="btn btn-outline btn-full" data-step="2">2. Fetch All Companies</button>
+        <button class="btn btn-outline btn-full" data-step="3">3. Fetch Jobs (first 3)</button>
+        <button class="btn btn-outline btn-full" data-step="4">4. AI Match (first company)</button>
+        <button class="btn btn-outline btn-full" data-step="5">5. Test Modal (dry run)</button>
+      </div>
+    </section>
+
+    <!-- Pipeline Section -->
+    <section id="pipeline-section">
+      <div class="pipeline-header">
+        <span>🚀 Full Pipeline</span>
+        <label class="toggle-label">
+          <input type="checkbox" id="cfg-dry-run" checked />
+          <span>Dry Run</span>
+        </label>
+      </div>
+      <div class="btn-row">
+        <button id="btn-start" class="btn btn-primary">Start Pipeline</button>
+        <button id="btn-stop" class="btn btn-danger" disabled>Stop</button>
+      </div>
+    </section>
+
+    <!-- Progress Section -->
+    <section id="progress-section" class="hidden">
+      <div id="progress-label">Idle</div>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+      </div>
+      <div id="progress-stats" class="stats-row"></div>
+    </section>
+
+    <!-- Review Queue Section -->
+    <section id="review-section" class="hidden">
+      <div class="review-header">
+        <span>📝 Review Queue (<span id="review-count">0</span>)</span>
+        <button id="btn-send-approved" class="btn btn-sm btn-primary" disabled>Send Approved</button>
+      </div>
+      <div id="review-list"></div>
+    </section>
+
+    <!-- Log Section -->
+    <section id="log-section" class="collapsible">
+      <button class="section-toggle" data-target="log-body">
+        📜 Log <span id="log-count" class="badge small">0</span>
+      </button>
+      <div id="log-body" class="section-body log-container">
+        <div id="log-list"></div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <button id="btn-export" class="btn btn-sm btn-outline">Export JSON</button>
+      <button id="btn-clear" class="btn btn-sm btn-outline">Clear State</button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

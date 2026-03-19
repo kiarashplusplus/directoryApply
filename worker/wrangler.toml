@@ -1,0 +1,11 @@
+name = "directory-apply-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-05"
+
+# Set these via `wrangler secret put`:
+# ANTHROPIC_API_KEY
+# OPENAI_API_KEY
+# DA_WORKER_TOKEN
+
+[vars]
+ENVIRONMENT = "production"

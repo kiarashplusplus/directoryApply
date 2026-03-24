@@ -1,6 +1,38 @@
 // DirectoryApply — Popup control panel
 "use strict";
 
+const LOG_PREFIX = "[DirectoryApply:popup]";
+let swAlive = false;
+let swLastSeen = 0;
+
+// ── Messaging Helpers ────────────────────────────────────────────────────
+// Wraps chrome.runtime.sendMessage with error logging + SW liveness tracking
+
+function sendMsg(msg, callback) {
+  chrome.runtime.sendMessage(msg, (response) => {
+    if (chrome.runtime.lastError) {
+      console.warn(LOG_PREFIX, `sendMessage(${msg.type}) failed:`, chrome.runtime.lastError.message);
+      setSWStatus(false);
+      if (callback) callback(undefined);
+      return;
+    }
+    setSWStatus(true);
+    if (callback) callback(response);
+  });
+}
+
+function setSWStatus(alive) {
+  swAlive = alive;
+  if (alive) swLastSeen = Date.now();
+  const indicator = document.querySelector("#sw-indicator");
+  if (indicator) {
+    indicator.className = "sw-indicator " + (alive ? "alive" : "dead");
+    indicator.title = alive
+      ? "Service worker connected"
+      : "Service worker disconnected — try reloading the extension";
+  }
+}
+
 // ── DOM References ───────────────────────────────────────────────────────
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -147,13 +179,13 @@ function renderReviewCards(queue) {
       const id = btn.dataset.id;
       const textarea = reviewList.querySelector(`textarea[data-id="${id}"]`);
       const note = textarea?.value || "";
-      chrome.runtime.sendMessage({ type: "APPROVE_ITEM", id, note });
+      sendMsg({ type: "APPROVE_ITEM", id, note });
     });
   });
 
   reviewList.querySelectorAll(".btn-reject").forEach((btn) => {
     btn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "REJECT_ITEM", id: btn.dataset.id });
+      sendMsg({ type: "REJECT_ITEM", id: btn.dataset.id });
     });
   });
 
@@ -163,7 +195,7 @@ function renderReviewCards(queue) {
     ta.addEventListener("input", () => {
       clearTimeout(timeout);
       timeout = setTimeout(() => {
-        chrome.runtime.sendMessage({ type: "EDIT_NOTE", id: ta.dataset.id, note: ta.value });
+        sendMsg({ type: "EDIT_NOTE", id: ta.dataset.id, note: ta.value });
       }, 500);
     });
   });
@@ -205,7 +237,7 @@ $$(".section-toggle").forEach((btn) => {
 // Save config
 $("#btn-save-config").addEventListener("click", () => {
   const config = getConfigFromUI();
-  chrome.runtime.sendMessage({ type: "SAVE_CONFIG", config });
+  sendMsg({ type: "SAVE_CONFIG", config });
 });
 
 // Step testing
@@ -216,11 +248,12 @@ $$("[data-step]").forEach((btn) => {
     btn.textContent += " ⏳";
 
     // Save config first
-    chrome.runtime.sendMessage({ type: "SAVE_CONFIG", config: getConfigFromUI() });
+    sendMsg({ type: "SAVE_CONFIG", config: getConfigFromUI() });
 
-    chrome.runtime.sendMessage({ type: "TEST_STEP", step }, (result) => {
+    sendMsg({ type: "TEST_STEP", step }, (result) => {
       btn.disabled = false;
       btn.textContent = btn.textContent.replace(" ⏳", result?.success ? " ✓" : " ✗");
+      if (!result) console.warn(LOG_PREFIX, `Step ${step} got no response — SW may be dead`);
       setTimeout(() => {
         btn.textContent = btn.textContent.replace(/ [✓✗]$/, "");
       }, 3000);
@@ -231,27 +264,31 @@ $$("[data-step]").forEach((btn) => {
 // Pipeline controls
 $("#btn-start").addEventListener("click", () => {
   // Save config first
-  chrome.runtime.sendMessage({ type: "SAVE_CONFIG", config: getConfigFromUI() });
-  chrome.runtime.sendMessage({ type: "START_PIPELINE" });
+  sendMsg({ type: "SAVE_CONFIG", config: getConfigFromUI() });
+  sendMsg({ type: "START_PIPELINE" });
 });
 
 $("#btn-stop").addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "STOP_PIPELINE" });
+  sendMsg({ type: "STOP_PIPELINE" });
 });
 
 // Dry run toggle
 $("#cfg-dry-run").addEventListener("change", () => {
-  chrome.runtime.sendMessage({ type: "SAVE_CONFIG", config: getConfigFromUI() });
+  sendMsg({ type: "SAVE_CONFIG", config: getConfigFromUI() });
 });
 
 // Send approved
 $("#btn-send-approved").addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "SEND_APPROVED" });
+  sendMsg({ type: "SEND_APPROVED" });
 });
 
 // Export
 $("#btn-export").addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "EXPORT_RESULTS" }, (data) => {
+  sendMsg({ type: "EXPORT_RESULTS" }, (data) => {
+    if (!data) {
+      console.error(LOG_PREFIX, "Export failed — no data from SW");
+      return;
+    }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -265,7 +302,7 @@ $("#btn-export").addEventListener("click", () => {
 // Clear state
 $("#btn-clear").addEventListener("click", () => {
   if (confirm("Clear all state? This cannot be undone.")) {
-    chrome.runtime.sendMessage({ type: "CLEAR_STATE" });
+    sendMsg({ type: "CLEAR_STATE" });
     reviewList.innerHTML = "";
     logList.innerHTML = "";
     progressSection.classList.add("hidden");
@@ -283,7 +320,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 // Initial state load
-chrome.runtime.sendMessage({ type: "GET_STATE" }, (state) => {
+sendMsg({ type: "GET_STATE" }, (state) => {
   if (state) {
     updateUI(state);
     // Load config into UI
@@ -302,7 +339,9 @@ chrome.storage.local.get(["daConfig"], (result) => {
 
 // Poll for state every 2 seconds (backup for missed messages)
 setInterval(() => {
-  chrome.runtime.sendMessage({ type: "GET_STATE" }, (state) => {
+  sendMsg({ type: "GET_STATE" }, (state) => {
     if (state) updateUI(state);
   });
 }, 2000);
+
+console.log(LOG_PREFIX, "Popup initialized");

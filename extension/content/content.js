@@ -42,7 +42,9 @@
         if (apiKeyMatch) results.apiKey = apiKeyMatch[1];
         if (indexMatch) results.indexName = indexMatch[1];
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn(LOG_PREFIX, "Algolia extraction from __NEXT_DATA__ failed:", err.message);
+    }
 
     // Strategy 2: Search inline script tags
     if (!results.appId || !results.apiKey) {
@@ -140,7 +142,9 @@
         }
         if (jobs.length > 0) return jobs;
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn(LOG_PREFIX, `parseCompanyPageForJobs(${slug}) __NEXT_DATA__ parse failed:`, err.message);
+    }
 
     // Strategy 2: DOM parsing for job links
     const jobLinks = doc.querySelectorAll('a[href*="/jobs/"]');
@@ -228,7 +232,9 @@
           };
         }
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn(LOG_PREFIX, "parseJobPage __NEXT_DATA__ parse failed:", err.message);
+    }
 
     // Fallback: DOM parsing
     const title =
@@ -287,12 +293,14 @@
       }
 
       if (!applyBtn) {
-        // Try CSS selectors
+        // Try CSS selectors (some may be non-standard and throw)
         for (const sel of applySelectors) {
           try {
             applyBtn = document.querySelector(sel);
             if (applyBtn) break;
-          } catch (_) {}
+          } catch (e) {
+            // Expected for non-standard selectors like :has-text()
+          }
         }
       }
 

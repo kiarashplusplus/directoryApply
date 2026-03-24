@@ -64,6 +64,17 @@ header h1 {
 .badge.error { background: var(--danger); color: #fff; }
 .badge.small { font-size: 10px; padding: 1px 5px; margin-left: 4px; }
 
+/* SW connection indicator */
+.sw-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sw-indicator.alive { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.sw-indicator.dead { background: var(--danger); box-shadow: 0 0 4px var(--danger); }
+
 /* Sections */
 section {
   background: var(--bg-surface);

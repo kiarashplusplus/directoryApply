@@ -39,11 +39,14 @@
       if (body) {
         try {
           parsedBody = typeof body === "string" ? JSON.parse(body) : body;
-        } catch (_) {}
+        } catch (err) {
+          console.warn("[DirectoryApply] Failed to parse Algolia request body:", err.message);
+        }
       }
 
       return { appId, apiKey, url, body: parsedBody };
-    } catch (_) {
+    } catch (err) {
+      console.warn("[DirectoryApply] extractAlgoliaData failed for URL:", url, err.message);
       return null;
     }
   }

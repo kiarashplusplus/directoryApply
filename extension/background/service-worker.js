@@ -417,7 +417,14 @@ Select the BEST job. Return ONLY JSON:
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
   }
-  const parsed = JSON.parse(cleaned);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (parseErr) {
+    log(`AI response JSON parse failed. Raw (first 500 chars): ${rawResponse.slice(0, 500)}`, "error");
+    throw new Error(`AI returned invalid JSON: ${parseErr.message}`);
+  }
 
   const selectedIdx = parsed.selectedJobIndex ?? 0;
   return {
@@ -477,7 +484,9 @@ async function applyToJob(reviewItem) {
   // Close the tab
   try {
     await chrome.tabs.remove(tabId);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[DirectoryApply:SW] Failed to close tab:", tabId, err.message);
+  }
 
   return result;
 }

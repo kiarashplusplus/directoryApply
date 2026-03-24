@@ -67,6 +67,8 @@
       const body = init?.body || null;
       const data = extractAlgoliaData(url, headers, body);
       if (data) {
+        // Store on window so content.js can read it even if it missed the postMessage
+        window.__DA_ALGOLIA_DATA = data;
         window.postMessage({ type: DA_MSG_TYPE, data }, window.location.origin);
       }
     }
@@ -96,6 +98,7 @@
     if (isAlgoliaUrl(this._daUrl)) {
       const data = extractAlgoliaData(this._daUrl, this._daHeaders, body);
       if (data) {
+        window.__DA_ALGOLIA_DATA = data;
         window.postMessage({ type: DA_MSG_TYPE, data }, window.location.origin);
       }
     }

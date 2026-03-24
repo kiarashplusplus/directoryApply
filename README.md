@@ -97,7 +97,7 @@ Open the extension popup and configure:
 | **Worker URL** | Your Cloudflare Worker URL. Leave empty to call AI API directly from the extension. |
 | **AI Provider** | `Anthropic (Claude)` or `OpenAI (GPT)` |
 | **AI API Key** | Your API key. Stored locally in Chrome storage. Sent to Worker or used directly. |
-| **Model** | Default: `claude-sonnet-4-20250514`. Can use `gpt-4o`, `claude-opus-4-20250514`, etc. |
+| **Model** | Default: `claude-sonnet-4-6`. Can use `gpt-4o`, `claude-opus-4-20250514`, etc. |
 | **Delay (ms)** | Milliseconds between requests. Default 1000. Increase to avoid rate limits. |
 | **Min Score** | Minimum AI match score (0-100) to include in review queue. Default 40. |
 | **Max Companies** | Limit number of companies to process. 0 = all. Useful for testing. |

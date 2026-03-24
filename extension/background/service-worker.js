@@ -371,6 +371,9 @@ async function matchCompanyWithAI(company, jobs) {
 }
 
 async function directAIMatch(payload) {
+  if (!payload.aiApiKey) {
+    throw new Error(`No API key configured for ${payload.aiProvider}. Set it in the popup Configuration section.`);
+  }
   const MAX_DESC_CHARS = 3000;
   const jobList = payload.jobs
     .map(
@@ -520,6 +523,15 @@ async function runFullPipeline() {
   if (state.running) {
     log("Pipeline already running!", "error");
     return;
+  }
+
+  // Pre-flight validation — fail fast before scraping hundreds of pages
+  if (!state.config.aiApiKey) {
+    log("❌ No AI API key configured. Set it in Configuration → AI API Key.", "error");
+    return;
+  }
+  if (!state.config.useDirectApi && state.config.workerUrl && !state.config.workerToken) {
+    log("⚠️ Worker URL set but no Worker Token — requests may fail if the worker requires auth.", "error");
   }
 
   state.running = true;

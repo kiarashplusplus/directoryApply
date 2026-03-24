@@ -145,7 +145,7 @@ function renderReviewCards(queue) {
       const statusClass = item.status;
 
       return `
-        <div class="review-card ${statusClass}" data-id="${escHtml(item.id)}">
+        <div class="review-card ${statusClass}" data-id="${escAttr(item.id)}">
           <div class="rc-header">
             <span class="rc-company">${escHtml(item.company.name)}</span>
             <span class="rc-score ${scoreClass}">${item.selectedJob.matchScore}</span>
@@ -153,12 +153,12 @@ function renderReviewCards(queue) {
           <div class="rc-job">📋 ${escHtml(item.selectedJob.title)}</div>
           <div class="rc-reasoning">${escHtml(item.selectedJob.reasoning)}</div>
           <div class="rc-note">
-            <textarea data-id="${escHtml(item.id)}" ${item.status !== "pending" ? "readonly" : ""}>${escHtml(item.note)}</textarea>
+            <textarea data-id="${escAttr(item.id)}" ${item.status !== "pending" ? "readonly" : ""}>${escHtml(item.note)}</textarea>
           </div>
           ${item.status === "pending" ? `
             <div class="rc-actions">
-              <button class="btn btn-sm btn-success btn-approve" data-id="${escHtml(item.id)}">✓ Approve</button>
-              <button class="btn btn-sm btn-danger btn-reject" data-id="${escHtml(item.id)}">✗ Skip</button>
+              <button class="btn btn-sm btn-success btn-approve" data-id="${escAttr(item.id)}">✓ Approve</button>
+              <button class="btn btn-sm btn-danger btn-reject" data-id="${escAttr(item.id)}">✗ Skip</button>
             </div>
           ` : `
             <div class="rc-actions">
@@ -223,6 +223,11 @@ function escHtml(str) {
   return div.innerHTML;
 }
 
+// Escape for use in HTML attribute values (also escapes quotes)
+function escAttr(str) {
+  return escHtml(str).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 // ── Event Listeners ──────────────────────────────────────────────────────
 
 // Collapsible sections
@@ -234,9 +239,24 @@ $$(".section-toggle").forEach((btn) => {
   });
 });
 
+function validateConfig(config) {
+  const warnings = [];
+  if (!config.aiApiKey) warnings.push("AI API key is empty — pipeline will fail at the matching step.");
+  if (config.workerUrl && !config.workerUrl.startsWith("https://")) {
+    warnings.push("Worker URL should start with https://");
+  }
+  if (config.delayMs < 500) warnings.push("Delay under 500ms risks rate limiting.");
+  return warnings;
+}
+
 // Save config
 $("#btn-save-config").addEventListener("click", () => {
   const config = getConfigFromUI();
+  const warnings = validateConfig(config);
+  if (warnings.length) {
+    const msg = "⚠️ Config warnings:\n\n• " + warnings.join("\n• ") + "\n\nSave anyway?";
+    if (!confirm(msg)) return;
+  }
   sendMsg({ type: "SAVE_CONFIG", config });
 });
 

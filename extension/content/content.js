@@ -6,11 +6,17 @@
   const LOG_PREFIX = "[DirectoryApply:content]";
 
   // ── Algolia Credential Relay ──────────────────────────────────────────
+  // Cache the latest Algolia data received from injected.js (MAIN world) via postMessage.
+  // Content scripts run in an ISOLATED world and cannot access window properties
+  // set in the MAIN world, so postMessage is the only communication channel.
+  let _lastAlgoliaData = null;
+
   // Listen for messages from injected.js (MAIN world) and forward to service worker
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     if (event.data?.type === "DIRECTORY_APPLY_ALGOLIA_INTERCEPTED") {
       console.log(LOG_PREFIX, "Algolia credentials intercepted:", event.data.data);
+      _lastAlgoliaData = event.data.data;
       chrome.runtime.sendMessage({
         type: "ALGOLIA_CREDENTIALS",
         data: event.data.data,
@@ -420,7 +426,12 @@
 
     switch (message.type) {
       case "EXTRACT_ALGOLIA_CONFIG": {
-        const config = extractAlgoliaFromScripts();
+        // First try the cached data relayed from injected.js via postMessage
+        let config = _lastAlgoliaData || null;
+        if (!config || !config.appId) {
+          // Fall back to parsing page scripts
+          config = extractAlgoliaFromScripts();
+        }
         console.log(LOG_PREFIX, "Extracted Algolia config:", config);
         sendResponse({ config });
         break;

@@ -3,9 +3,11 @@
 ## Pre-Flight Checklist (Before First Run)
 
 - [x] Update AI model name from `claude-sonnet-4-20250514` → `claude-sonnet-4-6` (hardcoded in 6 places)
-- [ ] Set AI API key in popup Configuration
+- [ ] Set AI API key in popup Configuration *(pipeline now refuses to start without it)*
+- [ ] Open `https://www.workatastartup.com/companies` in a tab before running *(required for Algolia capture)*
 - [ ] Set `maxCompanies: 5` for initial test run
 - [ ] Keep `dryRun: ✓` checked until you've reviewed results
+- [ ] Use Step-by-Step test buttons (1→2→3→4→5) before doing a full pipeline run
 - [ ] Consider raising `minMatchScore` from `40` → `50-60` to reduce noise
 - [ ] Consider raising `delayMs` from `1000` → `1500` to be gentle on workatastartup.com
 - [ ] If using Cloudflare Worker: set secrets (`wrangler secret put ANTHROPIC_API_KEY`) and deploy

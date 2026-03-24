@@ -2,7 +2,7 @@
 
 ## Pre-Flight Checklist (Before First Run)
 
-- [ ] Update AI model name from `claude-sonnet-4-20250514` → `claude-sonnet-4-6` (hardcoded in 6 places)
+- [x] Update AI model name from `claude-sonnet-4-20250514` → `claude-sonnet-4-6` (hardcoded in 6 places)
 - [ ] Set AI API key in popup Configuration
 - [ ] Set `maxCompanies: 5` for initial test run
 - [ ] Keep `dryRun: ✓` checked until you've reviewed results
@@ -16,26 +16,31 @@
 
 ### 🔴 Critical
 
-- [ ] **`max_tokens: 2048` may truncate AI responses** — Companies with many jobs produce large JSON output. If the model runs out of output tokens mid-JSON, the response is unparseable. Set to `64000` (Sonnet 4.6 max is 64K). There is no cost penalty — you only pay for tokens actually generated, not the limit. Setting near-max eliminates truncation risk entirely.
+- [x] **`max_tokens: 2048` may truncate AI responses** — Companies with many jobs produce large JSON output. If the model runs out of output tokens mid-JSON, the response is unparseable. Set to `64000` (Sonnet 4.6 max is 64K). There is no cost penalty — you only pay for tokens actually generated, not the limit. Setting near-max eliminates truncation risk entirely.
   - `extension/background/service-worker.js` — `directAIMatch()`, Anthropic and OpenAI calls
   - `worker/src/index.ts` — `callAnthropic()` and `callOpenAI()`
   - For OpenAI (`gpt-4o`), use `16384` (its max output)
+  - ✅ **Done:** Anthropic→64000, OpenAI→16384 in all 4 locations
 
-- [ ] **No prompt size guard** — All job descriptions are concatenated into one prompt with no length check. Job descriptions can be up to 5000 chars each (`content.js` `parseJobPage`). A company with 20 jobs = ~100K chars of job text. Should truncate per-job descriptions and/or cap total prompt size before sending to the API.
+- [x] **No prompt size guard** — All job descriptions are concatenated into one prompt with no length check. Job descriptions can be up to 5000 chars each (`content.js` `parseJobPage`). A company with 20 jobs = ~100K chars of job text. Should truncate per-job descriptions and/or cap total prompt size before sending to the API.
   - `extension/background/service-worker.js` — `directAIMatch()` prompt construction
   - `worker/src/index.ts` — `buildPrompt()`
+  - ✅ **Done:** Per-job descriptions capped at 3000 chars in both locations
 
-- [ ] **No API retry/backoff** — AI API calls have no retry on transient failures (429, 500, network timeout). A single failure logs the error and skips the company entirely.
+- [x] **No API retry/backoff** — AI API calls have no retry on transient failures (429, 500, network timeout). A single failure logs the error and skips the company entirely.
   - `extension/background/service-worker.js` — `directAIMatch()`
   - `worker/src/index.ts` — `callAnthropic()`, `callOpenAI()`
+  - ✅ **Done:** `fetchWithRetry()` wrapper added in both files — 3 retries, exponential backoff (1s, 2s, 4s) on 429/5xx/network errors
 
 ### 🟡 Medium
 
-- [ ] **Algolia pagination has no rate-limit backoff** — 300ms fixed delay between pages. If Algolia returns 429, the code logs but continues without exponential backoff.
+- [x] **Algolia pagination has no rate-limit backoff** — 300ms fixed delay between pages. If Algolia returns 429, the code logs but continues without exponential backoff.
   - `extension/background/service-worker.js` — `fetchAllCompaniesViaAlgolia()`
+  - ✅ **Done:** Algolia fetch now uses `fetchWithRetry()` (3 retries, 500ms base backoff)
 
-- [ ] **Tab load timeout rejects without graceful handling** — If a job page takes >30s to load, the promise rejects but the tab may remain open.
+- [x] **Tab load timeout rejects without graceful handling** — If a job page takes >30s to load, the promise rejects but the tab may remain open.
   - `extension/background/service-worker.js` — `applyToJob()` tab listener
+  - ✅ **Done:** Timeout handler now calls `chrome.tabs.remove(tabId)` before rejecting
 
 ---
 
@@ -65,14 +70,14 @@
 | Location | Value | What It Controls |
 |----------|-------|-----------------|
 | `service-worker.js` state.config | `aiProvider: "anthropic"` | Default AI provider |
-| `service-worker.js` state.config | `aiModel: "claude-sonnet-4-20250514"` → `"claude-sonnet-4-6"` | Default model name |
+| `service-worker.js` state.config | `aiModel: "claude-sonnet-4-6"` | Default model name |
 | `service-worker.js` state.config | `delayMs: 1000` | Delay between pipeline steps (ms) |
 | `service-worker.js` state.config | `dryRun: true` | Dry run on by default (safe) |
 | `service-worker.js` state.config | `minMatchScore: 40` | Minimum score for review queue |
 | `service-worker.js` state.config | `maxCompanies: 0` | 0 = all companies (no limit) |
-| `service-worker.js` directAIMatch | `max_tokens: 2048` → `64000` | AI output token limit (Sonnet 4.6 max: 64K) |
+| `service-worker.js` directAIMatch | `max_tokens: 64000` | AI output token limit (Sonnet 4.6 max: 64K) |
 | `service-worker.js` directAIMatch | `temperature: 0.3` | OpenAI temperature |
-| `worker/src/index.ts` callAnthropic | `max_tokens: 2048` → `64000` | Worker AI output token limit |
+| `worker/src/index.ts` callAnthropic | `max_tokens: 64000` | Worker AI output token limit |
 | `worker/src/index.ts` callOpenAI | `temperature: 0.3` | Worker OpenAI temperature |
 | `content.js` parseJobPage | `.slice(0, 5000)` | Max chars per job description scrape |
 
@@ -101,7 +106,7 @@ All default to `claude-sonnet-4-20250514` for Anthropic (update to `claude-sonne
 | `service-worker.js` | `500` | Max log entries | `LOG_HISTORY_MAX` |
 | `service-worker.js` | `30000` ms | Tab load timeout | `TAB_LOAD_TIMEOUT_MS` |
 | `service-worker.js` | `2000` ms | Post-load render delay | `PAGE_RENDER_DELAY_MS` |
-| `service-worker.js` | `2048` → `64000` | AI max output tokens | `AI_MAX_TOKENS` |
+| `service-worker.js` | `64000` | AI max output tokens | `AI_MAX_TOKENS` |
 | `content.js` | `1500` ms | Modal appear wait | `MODAL_APPEAR_DELAY_MS` |
 | `content.js` | `2000` ms | Modal retry wait | `MODAL_RETRY_DELAY_MS` |
 | `content.js` | `2000` ms | Post-submit wait | `SUBMIT_CONFIRM_DELAY_MS` |
@@ -125,7 +130,7 @@ All default to `claude-sonnet-4-20250514` for Anthropic (update to `claude-sonne
 ## Future Enhancements
 
 - [ ] Add token counting before AI calls (lightweight estimate: `prompt.length / 4`)
-- [ ] Add exponential backoff retry wrapper for API calls
+- [x] Add exponential backoff retry wrapper for API calls
 - [ ] Persist match results to `chrome.storage.local` so they survive SW restarts
 - [ ] Add "Resume pipeline" capability (skip already-matched companies)
 - [ ] Add cost estimation in the UI (based on prompt tokens × model pricing)

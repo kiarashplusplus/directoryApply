@@ -55,7 +55,7 @@ function loadConfigToUI(config) {
   $("#cfg-worker-token").value = config.workerToken || "";
   $("#cfg-ai-provider").value = config.aiProvider || "anthropic";
   $("#cfg-ai-key").value = config.aiApiKey || "";
-  $("#cfg-model").value = config.aiModel || "claude-sonnet-4-20250514";
+  $("#cfg-model").value = config.aiModel || "claude-sonnet-4-6";
   $("#cfg-delay").value = config.delayMs || 1000;
   $("#cfg-min-score").value = config.minMatchScore || 40;
   $("#cfg-max-companies").value = config.maxCompanies || 0;
@@ -68,7 +68,7 @@ function getConfigFromUI() {
     workerToken: $("#cfg-worker-token").value.trim(),
     aiProvider: $("#cfg-ai-provider").value,
     aiApiKey: $("#cfg-ai-key").value.trim(),
-    aiModel: $("#cfg-model").value.trim() || "claude-sonnet-4-20250514",
+    aiModel: $("#cfg-model").value.trim() || "claude-sonnet-4-6",
     delayMs: parseInt($("#cfg-delay").value) || 1000,
     dryRun: $("#cfg-dry-run").checked,
     minMatchScore: parseInt($("#cfg-min-score").value) || 40,

@@ -54,7 +54,7 @@ const state = {
     workerToken: "",
     aiProvider: "anthropic",
     aiApiKey: "",
-    aiModel: "claude-sonnet-4-20250514",
+    aiModel: "claude-sonnet-4-6",
     delayMs: 1000,
     dryRun: true,
     useDirectApi: false,
@@ -102,6 +102,25 @@ function getPublicState() {
 
 async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function fetchWithRetry(url, options, { retries = 3, baseDelayMs = 1000, label = "API" } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(url, options);
+      if (resp.ok || (resp.status < 500 && resp.status !== 429)) return resp;
+      if (attempt === retries) return resp; // return last failed response
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      log(`${label} returned ${resp.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${retries})`, "error");
+      await sleep(delay);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      log(`${label} network error: ${err.message}, retrying in ${delay}ms (attempt ${attempt + 1}/${retries})`, "error");
+      await sleep(delay);
+    }
+  }
+  throw new Error(`${label} fetchWithRetry: all retries exhausted`);
 }
 
 // ── Service Worker Keepalive ─────────────────────────────────────────────
@@ -192,7 +211,7 @@ async function fetchAllCompaniesViaAlgolia() {
     }
 
     try {
-      const response = await fetch(fetchUrl, {
+      const response = await fetchWithRetry(fetchUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -200,7 +219,7 @@ async function fetchAllCompaniesViaAlgolia() {
           "X-Algolia-API-Key": apiKey,
         },
         body: fetchBody,
-      });
+      }, { retries: 3, baseDelayMs: 500, label: "Algolia" });
 
       if (!response.ok) {
         throw new Error(`Algolia API returned ${response.status}: ${await response.text()}`);
@@ -352,10 +371,13 @@ async function matchCompanyWithAI(company, jobs) {
 }
 
 async function directAIMatch(payload) {
+  const MAX_DESC_CHARS = 3000;
   const jobList = payload.jobs
     .map(
-      (j, i) =>
-        `### Job ${i + 1}: ${j.title}\nURL: ${j.url}\n${j.location ? `Location: ${j.location}` : ""}\n${j.description || "(No description)"}\n`
+      (j, i) => {
+        const desc = (j.description || "(No description)").slice(0, MAX_DESC_CHARS);
+        return `### Job ${i + 1}: ${j.title}\nURL: ${j.url}\n${j.location ? `Location: ${j.location}` : ""}\n${desc}\n`;
+      }
     )
     .join("\n---\n");
 
@@ -377,7 +399,7 @@ Select the BEST job. Return ONLY JSON:
   let rawResponse;
 
   if (payload.aiProvider === "anthropic") {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    const resp = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -385,16 +407,16 @@ Select the BEST job. Return ONLY JSON:
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: payload.aiModel || "claude-sonnet-4-20250514",
-        max_tokens: 2048,
+        model: payload.aiModel || "claude-sonnet-4-6",
+        max_tokens: 64000,
         messages: [{ role: "user", content: prompt }],
       }),
-    });
+    }, { label: "Anthropic" });
     if (!resp.ok) throw new Error(`Anthropic error ${resp.status}: ${await resp.text()}`);
     const data = await resp.json();
     rawResponse = data.content[0].text;
   } else {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    const resp = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -402,11 +424,11 @@ Select the BEST job. Return ONLY JSON:
       },
       body: JSON.stringify({
         model: payload.aiModel || "gpt-4o",
-        max_tokens: 2048,
+        max_tokens: 16384,
         temperature: 0.3,
         messages: [{ role: "user", content: prompt }],
       }),
-    });
+    }, { label: "OpenAI" });
     if (!resp.ok) throw new Error(`OpenAI error ${resp.status}: ${await resp.text()}`);
     const data = await resp.json();
     rawResponse = data.choices[0].message.content;
@@ -459,6 +481,7 @@ async function applyToJob(reviewItem) {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
+      chrome.tabs.remove(tabId).catch(() => {});
       reject(new Error(`Tab load timeout for ${jobUrl}`));
     }, 30000);
     const listener = (updatedTabId, changeInfo) => {

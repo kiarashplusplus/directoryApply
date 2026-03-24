@@ -84,7 +84,26 @@ RESEARCH:
 • MIT CSAIL: 55x GPU speedup for speech recognition (ICASSP 2012)
 `.trim();
 
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  { retries = 3, baseDelayMs = 1000 } = {}
+): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(url, options);
+      if (resp.ok || (resp.status < 500 && resp.status !== 429)) return resp;
+      if (attempt === retries) return resp;
+    } catch (err) {
+      if (attempt === retries) throw err;
+    }
+    await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
+  }
+  throw new Error("fetchWithRetry: unreachable");
+}
+
 function buildPrompt(company: Company, jobs: Job[]): string {
+  const MAX_DESC_CHARS = 3000;
   const jobList = jobs
     .map(
       (j, i) => `
@@ -94,7 +113,7 @@ ${j.location ? `Location: ${j.location}` : ""}
 ${j.type ? `Type: ${j.type}` : ""}
 ${j.salary ? `Salary: ${j.salary}` : ""}
 
-${j.description || "(No description available)"}
+${(j.description || "(No description available)").slice(0, MAX_DESC_CHARS)}
 `
     )
     .join("\n---\n");
@@ -149,7 +168,7 @@ async function callAnthropic(
   apiKey: string,
   model: string
 ): Promise<string> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -158,7 +177,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 2048,
+      max_tokens: 64000,
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -179,7 +198,7 @@ async function callOpenAI(
   apiKey: string,
   model: string
 ): Promise<string> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -187,7 +206,7 @@ async function callOpenAI(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 2048,
+      max_tokens: 16384,
       temperature: 0.3,
       messages: [
         {
@@ -321,7 +340,7 @@ export default {
 
         const model =
           body.aiModel ||
-          (provider === "anthropic" ? "claude-sonnet-4-20250514" : "gpt-4o");
+          (provider === "anthropic" ? "claude-sonnet-4-6" : "gpt-4o");
 
         const prompt = buildPrompt(body.company, body.jobs);
 

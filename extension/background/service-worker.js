@@ -557,9 +557,21 @@ async function runFullPipeline() {
         state.algoliaConfig = result.config;
         log(`Extracted Algolia config from page: appId=${result.config.appId}`);
       } else {
-        throw new Error(
-          "Could not extract Algolia config. Navigate to the companies page and reload."
-        );
+        // Reload the page so injected.js can intercept live Algolia API calls
+        log("Script extraction failed. Reloading page to capture Algolia API calls...");
+        await chrome.tabs.reload(tab.id);
+        for (let i = 0; i < 15; i++) {
+          await sleep(1000);
+          if (state.algoliaConfig) {
+            log(`Interceptor captured Algolia config after reload: appId=${state.algoliaConfig.appId}`);
+            break;
+          }
+        }
+        if (!state.algoliaConfig) {
+          throw new Error(
+            "Could not extract Algolia config. Navigate to workatastartup.com/companies and try again."
+          );
+        }
       }
     }
     log(`✓ Algolia config ready: appId=${state.algoliaConfig.appId}`);
@@ -775,7 +787,20 @@ async function testStep(stepNum) {
         state.algoliaConfig = result.config;
         log(`Extracted: appId=${result.config.appId}, indexName=${result.config.indexName}`);
       } else {
-        log("Script extraction failed. Waiting for interceptor...", "error");
+        // Script extraction failed — reload the page so injected.js can intercept live Algolia calls
+        log("Script extraction failed. Reloading page to capture Algolia API calls...");
+        await chrome.tabs.reload(tab.id);
+        // Wait for the interceptor to relay credentials via ALGOLIA_CREDENTIALS message
+        for (let i = 0; i < 15; i++) {
+          await sleep(1000);
+          if (state.algoliaConfig) {
+            log(`Interceptor captured Algolia config after reload: appId=${state.algoliaConfig.appId}`);
+            break;
+          }
+        }
+        if (!state.algoliaConfig) {
+          log("Could not capture Algolia config after reload. Make sure you are on workatastartup.com/companies", "error");
+        }
       }
       return { success: !!state.algoliaConfig, data: state.algoliaConfig };
     }

@@ -210,7 +210,10 @@ function renderReviewCards(queue) {
   });
 }
 
+let _lastLogs = [];
+
 function renderLogs(logs) {
+  _lastLogs = logs;
   logCount.textContent = logs.length;
   logList.innerHTML = logs
     .slice(-80)
@@ -309,6 +312,16 @@ $("#cfg-dry-run").addEventListener("change", () => {
 // Send approved
 $("#btn-send-approved").addEventListener("click", () => {
   sendMsg({ type: "SEND_APPROVED" });
+});
+
+// Copy all logs
+$("#btn-copy-logs").addEventListener("click", () => {
+  const text = _lastLogs.map((l) => `${l.time}\t${l.message}`).join("\n");
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = $("#btn-copy-logs");
+    btn.textContent = "✓ Copied!";
+    setTimeout(() => { btn.textContent = "📋 Copy All Logs"; }, 1500);
+  });
 });
 
 // Export

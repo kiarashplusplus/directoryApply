@@ -237,20 +237,60 @@ async function fetchAllCompaniesViaAlgolia() {
       }
 
       const hits = result.hits || [];
+      if (page === 0 && hits.length > 0) {
+        log(`First hit keys: ${Object.keys(hits[0]).join(", ")}`);
+        // Log a sample hit for debugging field names (truncated)
+        const sample = {};
+        for (const [k, v] of Object.entries(hits[0])) {
+          if (k.startsWith("_")) continue;
+          sample[k] = typeof v === "string" ? v.slice(0, 120) : v;
+        }
+        log(`Sample hit: ${JSON.stringify(sample).slice(0, 800)}`);
+      }
       for (const hit of hits) {
-        allHits.push({
-          name: hit.name || hit.company_name || hit.title || "Unknown",
-          slug: hit.slug || hit.company_slug || hit.id?.toString() || "",
-          description: hit.one_liner || hit.description || hit.short_description || "",
-          url: `https://www.workatastartup.com/companies/${hit.slug || hit.company_slug || ""}`,
-          industry: hit.industry || hit.vertical || "",
-          teamSize: hit.team_size?.toString() || hit.teamSize || "",
-          tags: hit.tags || hit._tags || [],
-          batch: hit.batch || hit.yc_batch || "",
-          jobCount: hit.job_count || hit.jobs_count || 0,
-          // Store raw hit for debugging
-          _raw: hit,
-        });
+        // The Algolia index may return jobs (with company info embedded) or companies directly.
+        // Detect by checking for job-specific fields.
+        const isJobHit = !!(hit.job_title || hit.role || hit.title) && !!(hit.company_name || hit.startup_name);
+
+        if (isJobHit) {
+          // Job-centric hit: extract company info and group later
+          allHits.push({
+            name: hit.company_name || hit.startup_name || hit.company || "Unknown",
+            slug: hit.company_slug || hit.startup_slug || hit.company_id?.toString() || "",
+            description: hit.company_one_liner || hit.one_liner || hit.company_description || "",
+            url: hit.company_slug
+              ? `https://www.workatastartup.com/companies/${hit.company_slug}`
+              : hit.startup_slug
+                ? `https://www.workatastartup.com/companies/${hit.startup_slug}`
+                : "",
+            industry: hit.industry || hit.vertical || "",
+            teamSize: hit.team_size?.toString() || hit.teamSize || "",
+            tags: hit.tags || hit._tags || [],
+            batch: hit.batch || hit.yc_batch || "",
+            jobCount: 1,
+            // Embedded job data from the hit
+            _embeddedJob: {
+              title: hit.job_title || hit.role || hit.title || "",
+              url: hit.url || hit.job_url || "",
+              description: hit.description || hit.job_description || "",
+            },
+            _raw: hit,
+          });
+        } else {
+          // Company-centric hit
+          allHits.push({
+            name: hit.name || hit.company_name || hit.startup_name || hit.title || "Unknown",
+            slug: hit.slug || hit.company_slug || hit.startup_slug || hit.id?.toString() || "",
+            description: hit.one_liner || hit.description || hit.short_description || "",
+            url: `https://www.workatastartup.com/companies/${hit.slug || hit.company_slug || hit.startup_slug || ""}`,
+            industry: hit.industry || hit.vertical || "",
+            teamSize: hit.team_size?.toString() || hit.teamSize || "",
+            tags: hit.tags || hit._tags || [],
+            batch: hit.batch || hit.yc_batch || "",
+            jobCount: hit.job_count || hit.jobs_count || 0,
+            _raw: hit,
+          });
+        }
       }
 
       log(`Page ${page + 1}: ${hits.length} hits (total so far: ${allHits.length})`);
@@ -262,6 +302,33 @@ async function fetchAllCompaniesViaAlgolia() {
 
     page++;
     if (page < totalPages) await sleep(300); // Small delay between pages
+  }
+
+  // Deduplicate by company: if hits are job-centric, group by slug/name
+  const hasEmbeddedJobs = allHits.some((h) => h._embeddedJob);
+  if (hasEmbeddedJobs) {
+    const companyMap = new Map();
+    for (const hit of allHits) {
+      const key = hit.slug || hit.name;
+      if (!key || key === "Unknown") continue;
+      if (!companyMap.has(key)) {
+        const company = { ...hit, _embeddedJobs: [] };
+        if (hit._embeddedJob) {
+          company._embeddedJobs.push(hit._embeddedJob);
+          delete company._embeddedJob;
+        }
+        companyMap.set(key, company);
+      } else {
+        const existing = companyMap.get(key);
+        existing.jobCount = (existing.jobCount || 0) + 1;
+        if (hit._embeddedJob) {
+          existing._embeddedJobs.push(hit._embeddedJob);
+        }
+      }
+    }
+    const deduped = Array.from(companyMap.values());
+    log(`Deduplicated ${allHits.length} job hits → ${deduped.length} unique companies`);
+    return deduped;
   }
 
   return allHits;

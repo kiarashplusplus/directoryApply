@@ -52,9 +52,18 @@ const logCount = $("#log-count");
 
 function loadConfigToUI(config) {
   $("#cfg-worker-url").value = config.workerUrl || "";
-  $("#cfg-worker-token").value = config.workerToken || "";
+  // Don't overwrite sensitive fields with masked placeholder values
+  if (config.workerToken && config.workerToken !== "***") {
+    $("#cfg-worker-token").value = config.workerToken;
+  } else if (!config.workerToken) {
+    $("#cfg-worker-token").value = "";
+  }
   $("#cfg-ai-provider").value = config.aiProvider || "anthropic";
-  $("#cfg-ai-key").value = config.aiApiKey || "";
+  if (config.aiApiKey && config.aiApiKey !== "***") {
+    $("#cfg-ai-key").value = config.aiApiKey;
+  } else if (!config.aiApiKey) {
+    $("#cfg-ai-key").value = "";
+  }
   $("#cfg-model").value = config.aiModel || "claude-sonnet-4-6";
   $("#cfg-delay").value = config.delayMs || 1000;
   $("#cfg-min-score").value = config.minMatchScore || 40;

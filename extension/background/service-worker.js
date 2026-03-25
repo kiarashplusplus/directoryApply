@@ -552,26 +552,12 @@ async function runFullPipeline() {
       if (!tab) {
         throw new Error("No workatastartup.com tab found. Open the companies page first.");
       }
-      const result = await sendToContentScript(tab.id, { type: "EXTRACT_ALGOLIA_CONFIG" });
-      if (result.config) {
-        state.algoliaConfig = result.config;
-        log(`Extracted Algolia config from page: appId=${result.config.appId}`);
-      } else {
-        // Reload the page so injected.js can intercept live Algolia API calls
-        log("Script extraction failed. Reloading page to capture Algolia API calls...");
-        await chrome.tabs.reload(tab.id);
-        for (let i = 0; i < 15; i++) {
-          await sleep(1000);
-          if (state.algoliaConfig) {
-            log(`Interceptor captured Algolia config after reload: appId=${state.algoliaConfig.appId}`);
-            break;
-          }
-        }
-        if (!state.algoliaConfig) {
-          throw new Error(
-            "Could not extract Algolia config. Navigate to workatastartup.com/companies and try again."
-          );
-        }
+      // Reuse the Step 1 test logic which has multiple extraction strategies
+      const stepResult = await testStep(1);
+      if (!stepResult.success) {
+        throw new Error(
+          "Could not extract Algolia config. Navigate to workatastartup.com/companies and try again."
+        );
       }
     }
     log(`✓ Algolia config ready: appId=${state.algoliaConfig.appId}`);
@@ -782,27 +768,169 @@ async function testStep(stepNum) {
       }
       if (!tab) return { success: false, error: "No WaaS tab found" };
 
+      // Strategy 1: Check if content script already has cached data
       const result = await sendToContentScript(tab.id, { type: "EXTRACT_ALGOLIA_CONFIG" });
-      if (result.config) {
+      if (result.config?.appId && result.config?.apiKey) {
         state.algoliaConfig = result.config;
-        log(`Extracted: appId=${result.config.appId}, indexName=${result.config.indexName}`);
-      } else {
-        // Script extraction failed — reload the page so injected.js can intercept live Algolia calls
-        log("Script extraction failed. Reloading page to capture Algolia API calls...");
-        await chrome.tabs.reload(tab.id);
-        // Wait for the interceptor to relay credentials via ALGOLIA_CREDENTIALS message
-        for (let i = 0; i < 15; i++) {
-          await sleep(1000);
-          if (state.algoliaConfig) {
-            log(`Interceptor captured Algolia config after reload: appId=${state.algoliaConfig.appId}`);
-            break;
-          }
+        log(`Extracted from content script: appId=${result.config.appId}`);
+        return { success: true, data: state.algoliaConfig };
+      }
+      log("Content script extraction failed. Trying MAIN world probe...");
+
+      // Strategy 2: Directly probe MAIN world for cached interceptor data or page globals
+      try {
+        const probeResults = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: () => {
+            // Check interceptor cache
+            if (window.__DA_ALGOLIA_DATA?.appId && window.__DA_ALGOLIA_DATA?.apiKey) {
+              return window.__DA_ALGOLIA_DATA;
+            }
+            // Search for Algolia client instances on common global objects
+            const globals = [window.__NEXT_DATA__, window.__algoliaClient, window.__STORE__];
+            for (const g of globals) {
+              if (!g) continue;
+              const str = JSON.stringify(g);
+              const appIdMatch = str.match(/"(?:algoliaAppId|ALGOLIA_APP_ID|appId|applicationID)"\s*:\s*"([A-Z0-9]{6,20})"/i);
+              const apiKeyMatch = str.match(/"(?:algoliaApiKey|ALGOLIA_API_KEY|apiKey|searchApiKey|searchOnlyAPIKey)"\s*:\s*"([a-f0-9]{20,64})"/i);
+              if (appIdMatch && apiKeyMatch) {
+                return { appId: appIdMatch[1], apiKey: apiKeyMatch[1] };
+              }
+            }
+            return null;
+          },
+        });
+        const probeData = probeResults?.[0]?.result;
+        if (probeData?.appId && probeData?.apiKey) {
+          state.algoliaConfig = probeData;
+          log(`Probed MAIN world: appId=${probeData.appId}`);
+          return { success: true, data: state.algoliaConfig };
         }
-        if (!state.algoliaConfig) {
-          log("Could not capture Algolia config after reload. Make sure you are on workatastartup.com/companies", "error");
+      } catch (err) {
+        log(`MAIN world probe failed: ${err.message}`);
+      }
+
+      // Strategy 3: Reload page to trigger fresh Algolia requests, then wait for interceptor
+      log("Reloading page to capture Algolia API calls...");
+      await chrome.tabs.reload(tab.id);
+      // Wait for page load + interceptor
+      for (let i = 0; i < 20; i++) {
+        await sleep(1000);
+        if (state.algoliaConfig) {
+          log(`Interceptor captured Algolia config after reload: appId=${state.algoliaConfig.appId}`);
+          return { success: true, data: state.algoliaConfig };
         }
       }
-      return { success: !!state.algoliaConfig, data: state.algoliaConfig };
+
+      // Strategy 4: After reload, probe MAIN world one more time
+      try {
+        const postReloadResults = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: () => window.__DA_ALGOLIA_DATA || null,
+        });
+        const postData = postReloadResults?.[0]?.result;
+        if (postData?.appId && postData?.apiKey) {
+          state.algoliaConfig = postData;
+          log(`Post-reload MAIN world probe: appId=${postData.appId}`);
+          return { success: true, data: state.algoliaConfig };
+        }
+      } catch (err) {
+        log(`Post-reload probe failed: ${err.message}`);
+      }
+
+      // Strategy 5: Try triggering an Algolia call by simulating user interaction
+      log("Trying to trigger Algolia call via search input...");
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: () => {
+            const searchInput = document.querySelector('input[type="search"], input[placeholder*="Search"], input[class*="search"], .ais-SearchBox-input');
+            if (searchInput) {
+              searchInput.focus();
+              searchInput.value = "a";
+              searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+              // Reset after a moment
+              setTimeout(() => {
+                searchInput.value = "";
+                searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+              }, 500);
+            }
+          },
+        });
+        // Wait for the triggered call
+        for (let i = 0; i < 5; i++) {
+          await sleep(1000);
+          if (state.algoliaConfig) {
+            log(`Triggered Algolia call captured: appId=${state.algoliaConfig.appId}`);
+            return { success: true, data: state.algoliaConfig };
+          }
+        }
+      } catch (err) {
+        log(`Search trigger failed: ${err.message}`);
+      }
+
+      // Strategy 6: Inspect network requests via Performance API
+      try {
+        const perfResults = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: () => {
+            const entries = performance.getEntriesByType("resource");
+            for (const entry of entries) {
+              if (entry.name.includes("algolia.net") || entry.name.includes("algolianet.com")) {
+                const urlObj = new URL(entry.name);
+                const appId = urlObj.hostname.split("-")[0] || urlObj.hostname.split(".")[0];
+                return { appId, url: entry.name, foundVia: "performance" };
+              }
+            }
+            return null;
+          },
+        });
+        const perfData = perfResults?.[0]?.result;
+        if (perfData?.appId) {
+          log(`Found Algolia request via Performance API: appId=${perfData.appId}, url=${perfData.url}`);
+          // We have the appId but still need apiKey — check page scripts
+          const scriptResults = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            world: "MAIN",
+            func: (knownAppId) => {
+              // Search all script content for the API key associated with this app ID
+              const scripts = document.querySelectorAll('script:not([type="application/ld+json"])');
+              for (const script of scripts) {
+                const text = script.textContent || "";
+                if (text.includes(knownAppId)) {
+                  const keyMatch = text.match(/["']([a-f0-9]{20,64})["']/);
+                  if (keyMatch) return keyMatch[1];
+                }
+              }
+              // Check all text content for the key pattern near our app ID
+              const html = document.documentElement.innerHTML;
+              const appIdPos = html.indexOf(knownAppId);
+              if (appIdPos >= 0) {
+                const nearby = html.substring(Math.max(0, appIdPos - 500), appIdPos + 500);
+                const keyMatch = nearby.match(/['"]((?=[a-f0-9]*[a-f])[a-f0-9]{20,64})['"]/);
+                if (keyMatch) return keyMatch[1];
+              }
+              return null;
+            },
+            args: [perfData.appId],
+          });
+          const apiKey = scriptResults?.[0]?.result;
+          if (apiKey) {
+            state.algoliaConfig = { appId: perfData.appId, apiKey, url: perfData.url };
+            log(`Assembled config from Performance API + page scripts: appId=${perfData.appId}`);
+            return { success: true, data: state.algoliaConfig };
+          }
+        }
+      } catch (err) {
+        log(`Performance API probe failed: ${err.message}`);
+      }
+
+      log("All Algolia extraction strategies failed. Check browser console for [DirectoryApply] messages.", "error");
+      return { success: false, error: "Could not extract Algolia config after multiple strategies" };
     }
 
     case 2: {
@@ -914,7 +1042,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case "SAVE_CONFIG": {
-      Object.assign(state.config, message.config);
+      // Don't overwrite real secrets with masked placeholder values
+      const incoming = { ...message.config };
+      if (incoming.aiApiKey === "***") delete incoming.aiApiKey;
+      if (incoming.workerToken === "***") delete incoming.workerToken;
+      Object.assign(state.config, incoming);
       chrome.storage.local.set({ daConfig: state.config });
       log("Configuration saved");
       sendResponse({ success: true });

@@ -24,6 +24,10 @@
     }
   });
 
+  // Ask injected.js (MAIN world) to re-broadcast any cached Algolia data.
+  // content.js loads at document_idle and may have missed the initial postMessage.
+  window.postMessage({ type: "DIRECTORY_APPLY_REQUEST_ALGOLIA" }, window.location.origin);
+
   // ── Fallback: Extract Algolia credentials from page scripts ───────────
   function extractAlgoliaFromScripts() {
     const results = { appId: null, apiKey: null, indexName: null };

@@ -105,5 +105,29 @@
     return originalSend.call(this, body);
   };
 
+  // Re-broadcast cached Algolia data after page load.
+  // content.js runs at document_idle and may miss the initial postMessage
+  // if the Algolia request fires during early page load.
+  window.addEventListener("load", () => {
+    if (window.__DA_ALGOLIA_DATA) {
+      window.postMessage({ type: DA_MSG_TYPE, data: window.__DA_ALGOLIA_DATA }, window.location.origin);
+    }
+  });
+  // Also re-broadcast with a delay as a safety net for SPAs that make Algolia calls
+  // after initial load but before content script is fully wired up
+  setTimeout(() => {
+    if (window.__DA_ALGOLIA_DATA) {
+      window.postMessage({ type: DA_MSG_TYPE, data: window.__DA_ALGOLIA_DATA }, window.location.origin);
+    }
+  }, 3000);
+
+  // Listen for content.js requesting cached Algolia data (it loads at document_idle)
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (event.data?.type === "DIRECTORY_APPLY_REQUEST_ALGOLIA" && window.__DA_ALGOLIA_DATA) {
+      window.postMessage({ type: DA_MSG_TYPE, data: window.__DA_ALGOLIA_DATA }, window.location.origin);
+    }
+  });
+
   console.log("[DirectoryApply] Algolia interceptor active");
 })();

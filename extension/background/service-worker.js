@@ -239,7 +239,6 @@ async function fetchAllCompaniesViaAlgolia() {
       const hits = result.hits || [];
       if (page === 0 && hits.length > 0) {
         log(`First hit keys: ${Object.keys(hits[0]).join(", ")}`);
-        // Log a sample hit for debugging field names (truncated)
         const sample = {};
         for (const [k, v] of Object.entries(hits[0])) {
           if (k.startsWith("_")) continue;
@@ -248,46 +247,21 @@ async function fetchAllCompaniesViaAlgolia() {
         log(`Sample hit: ${JSON.stringify(sample).slice(0, 800)}`);
       }
       for (const hit of hits) {
-        // The Algolia index may return jobs (with company info embedded) or companies directly.
-        // Detect by checking for job-specific fields.
-        const isJobHit = !!(hit.job_title || hit.role || hit.title) && !!(hit.company_name || hit.startup_name);
+        // WaaS Algolia returns minimal hits: {company_id, objectID}
+        // objectID is the job listing ID, company_id groups them
+        const companyId = hit.company_id?.toString() || hit.companyId?.toString() || "";
+        const jobId = hit.objectID || hit.id?.toString() || "";
 
-        if (isJobHit) {
-          // Job-centric hit: extract company info and group later
+        if (companyId) {
           allHits.push({
-            name: hit.company_name || hit.startup_name || hit.company || "Unknown",
-            slug: hit.company_slug || hit.startup_slug || hit.company_id?.toString() || "",
-            description: hit.company_one_liner || hit.one_liner || hit.company_description || "",
-            url: hit.company_slug
-              ? `https://www.workatastartup.com/companies/${hit.company_slug}`
-              : hit.startup_slug
-                ? `https://www.workatastartup.com/companies/${hit.startup_slug}`
-                : "",
-            industry: hit.industry || hit.vertical || "",
-            teamSize: hit.team_size?.toString() || hit.teamSize || "",
-            tags: hit.tags || hit._tags || [],
-            batch: hit.batch || hit.yc_batch || "",
-            jobCount: 1,
-            // Embedded job data from the hit
-            _embeddedJob: {
-              title: hit.job_title || hit.role || hit.title || "",
-              url: hit.url || hit.job_url || "",
-              description: hit.description || hit.job_description || "",
-            },
-            _raw: hit,
-          });
-        } else {
-          // Company-centric hit
-          allHits.push({
-            name: hit.name || hit.company_name || hit.startup_name || hit.title || "Unknown",
-            slug: hit.slug || hit.company_slug || hit.startup_slug || hit.id?.toString() || "",
-            description: hit.one_liner || hit.description || hit.short_description || "",
-            url: `https://www.workatastartup.com/companies/${hit.slug || hit.company_slug || hit.startup_slug || ""}`,
-            industry: hit.industry || hit.vertical || "",
-            teamSize: hit.team_size?.toString() || hit.teamSize || "",
-            tags: hit.tags || hit._tags || [],
-            batch: hit.batch || hit.yc_batch || "",
-            jobCount: hit.job_count || hit.jobs_count || 0,
+            _companyId: companyId,
+            _jobId: jobId,
+            // These will be populated later from company page scraping
+            name: hit.company_name || hit.name || hit.startup_name || "",
+            slug: hit.company_slug || hit.slug || "",
+            description: hit.one_liner || hit.description || "",
+            industry: hit.industry || "",
+            batch: hit.batch || "",
             _raw: hit,
           });
         }
@@ -304,34 +278,37 @@ async function fetchAllCompaniesViaAlgolia() {
     if (page < totalPages) await sleep(300); // Small delay between pages
   }
 
-  // Deduplicate by company: if hits are job-centric, group by slug/name
-  const hasEmbeddedJobs = allHits.some((h) => h._embeddedJob);
-  if (hasEmbeddedJobs) {
-    const companyMap = new Map();
-    for (const hit of allHits) {
-      const key = hit.slug || hit.name;
-      if (!key || key === "Unknown") continue;
-      if (!companyMap.has(key)) {
-        const company = { ...hit, _embeddedJobs: [] };
-        if (hit._embeddedJob) {
-          company._embeddedJobs.push(hit._embeddedJob);
-          delete company._embeddedJob;
-        }
-        companyMap.set(key, company);
-      } else {
-        const existing = companyMap.get(key);
-        existing.jobCount = (existing.jobCount || 0) + 1;
-        if (hit._embeddedJob) {
-          existing._embeddedJobs.push(hit._embeddedJob);
-        }
+  // Group hits by company_id → each company gets a list of job IDs
+  const companyMap = new Map();
+  for (const hit of allHits) {
+    const key = hit._companyId || hit.slug || hit.name;
+    if (!key) continue;
+    if (!companyMap.has(key)) {
+      companyMap.set(key, {
+        name: hit.name || `Company #${hit._companyId}`,
+        slug: hit.slug || "",
+        _companyId: hit._companyId,
+        description: hit.description || "",
+        industry: hit.industry || "",
+        batch: hit.batch || "",
+        url: hit.slug
+          ? `https://www.workatastartup.com/companies/${hit.slug}`
+          : "",
+        _jobIds: hit._jobId ? [hit._jobId] : [],
+        jobCount: 1,
+      });
+    } else {
+      const existing = companyMap.get(key);
+      existing.jobCount++;
+      if (hit._jobId && !existing._jobIds.includes(hit._jobId)) {
+        existing._jobIds.push(hit._jobId);
       }
     }
-    const deduped = Array.from(companyMap.values());
-    log(`Deduplicated ${allHits.length} job hits → ${deduped.length} unique companies`);
-    return deduped;
   }
 
-  return allHits;
+  const companies = Array.from(companyMap.values());
+  log(`Grouped ${allHits.length} Algolia hits → ${companies.length} unique companies (by company_id)`);
+  return companies;
 }
 
 // ── Job Scraping ─────────────────────────────────────────────────────────
@@ -355,7 +332,20 @@ async function sendToContentScript(tabId, message) {
 }
 
 async function fetchJobsForCompany(tabId, company) {
-  // Ask content script to fetch and parse the company page
+  // If we already have job IDs from Algolia, use them directly
+  if (company._jobIds && company._jobIds.length > 0) {
+    return company._jobIds.map((jobId) => ({
+      id: jobId,
+      title: "",
+      url: `https://www.workatastartup.com/jobs/${jobId}`,
+    }));
+  }
+
+  // Fallback: Ask content script to fetch and parse the company page
+  if (!company.url) {
+    log(`No URL for ${company.name} — skipping`, "error");
+    return [];
+  }
   const result = await sendToContentScript(tabId, {
     type: "FETCH_AND_PARSE_COMPANY",
     url: company.url,
@@ -368,6 +358,32 @@ async function fetchJobsForCompany(tabId, company) {
   }
 
   return result.jobs || [];
+}
+
+async function resolveCompanyInfo(tabId, company) {
+  // If company already has name and slug from Algolia, skip
+  if (company.name && company.slug && company.name !== `Company #${company._companyId}`) {
+    return company;
+  }
+
+  // Fetch company info from a job page — the job page contains company details
+  if (company._jobIds && company._jobIds.length > 0) {
+    const jobUrl = `https://www.workatastartup.com/jobs/${company._jobIds[0]}`;
+    const result = await sendToContentScript(tabId, {
+      type: "FETCH_AND_PARSE_JOB",
+      url: jobUrl,
+    });
+
+    if (result.job) {
+      if (result.job.companyName) company.name = result.job.companyName;
+      if (result.job.companySlug) {
+        company.slug = result.job.companySlug;
+        company.url = `https://www.workatastartup.com/companies/${result.job.companySlug}`;
+      }
+    }
+  }
+
+  return company;
 }
 
 async function fetchJobDetails(tabId, job) {
@@ -649,10 +665,19 @@ async function runFullPipeline() {
     const tab = await getContentScriptTab();
     if (!tab) throw new Error("No workatastartup.com tab found.");
 
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 5;
+
     for (let i = 0; i < state.companies.length; i++) {
       if (state.aborted) throw new Error("Aborted by user");
 
       const company = state.companies[i];
+
+      // Resolve company name/slug from first job page if needed
+      if (!company.slug || company.name === `Company #${company._companyId}`) {
+        await resolveCompanyInfo(tab.id, company);
+      }
+
       state.progress = {
         current: i + 1,
         total: state.companies.length,
@@ -671,8 +696,22 @@ async function runFullPipeline() {
         await sleep(Math.max(200, state.config.delayMs / 2)); // Rate limit
       }
 
-      state.jobsByCompany[company.slug] = detailedJobs;
-      log(`${company.name}: ${detailedJobs.length} jobs found`);
+      // Use companyId as fallback key if slug is still empty
+      const companyKey = company.slug || company._companyId || `company-${i}`;
+      if (!company.slug) company.slug = companyKey;
+      state.jobsByCompany[companyKey] = detailedJobs;
+
+      if (detailedJobs.length > 0) {
+        consecutiveFailures = 0;
+        log(`${company.name}: ${detailedJobs.length} jobs found`);
+      } else {
+        consecutiveFailures++;
+        log(`${company.name}: 0 jobs found (${consecutiveFailures} consecutive failures)`, "error");
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          log(`⚠ ${MAX_CONSECUTIVE_FAILURES} consecutive companies with 0 jobs — likely a scraping issue. Aborting pipeline.`, "error");
+          throw new Error(`Aborting: ${MAX_CONSECUTIVE_FAILURES} consecutive companies returned 0 jobs. Check scraping logic.`);
+        }
+      }
 
       await sleep(state.config.delayMs);
     }
@@ -1020,6 +1059,11 @@ async function testStep(stepNum) {
       if (testCompanies.length === 0) return { success: false, error: "Run step 2 first" };
 
       for (const company of testCompanies) {
+        // Resolve company info if needed
+        if (!company.slug || company.name === `Company #${company._companyId}`) {
+          await resolveCompanyInfo(tab.id, company);
+        }
+
         const jobs = await fetchJobsForCompany(tab.id, company);
         const detailedJobs = [];
         for (const job of jobs.slice(0, 2)) {
@@ -1028,7 +1072,9 @@ async function testStep(stepNum) {
           detailedJobs.push(detailed);
           await sleep(500);
         }
-        state.jobsByCompany[company.slug] = detailedJobs;
+        const companyKey = company.slug || company._companyId || company.name;
+        if (!company.slug) company.slug = companyKey;
+        state.jobsByCompany[companyKey] = detailedJobs;
         log(`${company.name}: ${detailedJobs.length} jobs`);
         detailedJobs.forEach((j) =>
           log(`  - ${j.title} (${j.url}) — ${(j.description || "").slice(0, 80)}...`)

@@ -229,6 +229,8 @@
         const props = data?.props?.pageProps;
         if (props?.job || props?.listing) {
           const job = props.job || props.listing;
+          const companySlug = job.company?.slug || props.company?.slug ||
+            (job.company?.url || props.company?.url || "").match(/\/companies\/([^/?#]+)/)?.[1] || "";
           return {
             title: job.title || "",
             description: job.description || job.body || "",
@@ -237,6 +239,7 @@
             salary: job.salary || job.salaryRange || "",
             skills: job.skills || job.tags || [],
             companyName: job.company?.name || props.company?.name || "",
+            companySlug,
             companyDescription:
               job.company?.description || props.company?.description || "",
           };
@@ -264,6 +267,10 @@
       "[class*='company-name'], [class*='company'] h2, [class*='company'] h3"
     );
 
+    // Try to find company slug from links
+    const companyLink = doc.querySelector('a[href*="/companies/"]');
+    const companySlug = companyLink?.getAttribute("href")?.match(/\/companies\/([^/?#]+)/)?.[1] || "";
+
     return {
       title,
       description,
@@ -272,6 +279,7 @@
       salary: "",
       skills: [],
       companyName: companyEl?.textContent?.trim() || "",
+      companySlug,
       companyDescription: "",
     };
   }

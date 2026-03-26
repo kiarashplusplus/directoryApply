@@ -751,7 +751,6 @@ async function runFullPipeline() {
         log(`Skipping ${company.name} — already matched (cached)`);
         continue;
       }
-      }
 
       state.progress = {
         current: i + 1,

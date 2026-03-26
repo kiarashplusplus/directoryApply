@@ -655,6 +655,7 @@ async function runFullPipeline() {
       log(`Limited to first ${state.config.maxCompanies} companies`);
     }
     log(`✓ Fetched ${state.companies.length} companies`);
+    savePipelineData();
 
     if (state.aborted) throw new Error("Aborted by user");
 
@@ -676,6 +677,13 @@ async function runFullPipeline() {
       // Resolve company name/slug from first job page if needed
       if (!company.slug || company.name === `Company #${company._companyId}`) {
         await resolveCompanyInfo(tab.id, company);
+      }
+
+      // Skip companies that already have fetched jobs (resume support)
+      const existingKey = company.slug || company._companyId || `company-${i}`;
+      if (state.jobsByCompany[existingKey]?.length > 0) {
+        log(`Skipping ${company.name} — already have ${state.jobsByCompany[existingKey].length} jobs (cached)`);
+        continue;
       }
 
       state.progress = {
@@ -704,6 +712,7 @@ async function runFullPipeline() {
       if (detailedJobs.length > 0) {
         consecutiveFailures = 0;
         log(`${company.name}: ${detailedJobs.length} jobs found`);
+        savePipelineData();
       } else {
         consecutiveFailures++;
         log(`${company.name}: 0 jobs found (${consecutiveFailures} consecutive failures)`, "error");
@@ -734,6 +743,14 @@ async function runFullPipeline() {
       if (jobs.length === 0) {
         log(`Skipping ${company.name} — no jobs found`);
         continue;
+      }
+
+      // Skip companies already matched (resume support)
+      const alreadyMatched = state.matchResults.some((r) => r.company.slug === company.slug);
+      if (alreadyMatched) {
+        log(`Skipping ${company.name} — already matched (cached)`);
+        continue;
+      }
       }
 
       state.progress = {
@@ -770,6 +787,7 @@ async function runFullPipeline() {
         log(
           `${company.name}: Best match = "${matchResult.selectedJob.title}" (score: ${matchResult.selectedJob.matchScore})`
         );
+        savePipelineData();
       } catch (err) {
         log(`AI matching error for ${company.name}: ${err.message}`, "error");
       }
@@ -1192,6 +1210,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         log(`Approved: ${item.company.name} — ${item.selectedJob.title}`);
       }
       broadcastState();
+      savePipelineData();
       sendResponse({ success: true });
       break;
     }
@@ -1204,6 +1223,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         log(`Skipped: ${rItem.company.name}`);
       }
       broadcastState();
+      savePipelineData();
       sendResponse({ success: true });
       break;
     }
@@ -1238,6 +1258,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case "CLEAR_STATE": {
+      state.algoliaConfig = null;
       state.companies = [];
       state.jobsByCompany = {};
       state.matchResults = [];
@@ -1246,7 +1267,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       state.skippedJobs = [];
       state.currentStep = "idle";
       state.logs = [];
-      log("State cleared");
+      chrome.storage.local.remove("daPipelineData");
+      log("State cleared (memory + storage)");
       broadcastState();
       sendResponse({ success: true });
       break;
@@ -1256,11 +1278,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ── Initialization ───────────────────────────────────────────────────────
 
-chrome.storage.local.get(["daConfig"], (result) => {
+chrome.storage.local.get(["daConfig", "daPipelineData"], (result) => {
   if (result.daConfig) {
     Object.assign(state.config, result.daConfig);
     console.log("[DirectoryApply:SW] Config loaded from storage");
   }
+  if (result.daPipelineData) {
+    const saved = result.daPipelineData;
+    if (saved.algoliaConfig) state.algoliaConfig = saved.algoliaConfig;
+    if (saved.companies?.length) state.companies = saved.companies;
+    if (saved.jobsByCompany && Object.keys(saved.jobsByCompany).length) state.jobsByCompany = saved.jobsByCompany;
+    if (saved.matchResults?.length) state.matchResults = saved.matchResults;
+    if (saved.reviewQueue?.length) state.reviewQueue = saved.reviewQueue;
+    if (saved.appliedJobs?.length) state.appliedJobs = saved.appliedJobs;
+    if (saved.skippedJobs?.length) state.skippedJobs = saved.skippedJobs;
+    const parts = [];
+    if (state.companies.length) parts.push(`${state.companies.length} companies`);
+    if (Object.keys(state.jobsByCompany).length) parts.push(`${Object.values(state.jobsByCompany).reduce((s, j) => s + j.length, 0)} jobs`);
+    if (state.matchResults.length) parts.push(`${state.matchResults.length} matches`);
+    if (state.reviewQueue.length) parts.push(`${state.reviewQueue.length} in review`);
+    console.log("[DirectoryApply:SW] Pipeline data restored:", parts.join(", ") || "empty");
+  }
 });
+
+// Save pipeline state to chrome.storage.local (debounced)
+let _saveTimeout = null;
+function savePipelineData() {
+  clearTimeout(_saveTimeout);
+  _saveTimeout = setTimeout(() => {
+    chrome.storage.local.set({
+      daPipelineData: {
+        algoliaConfig: state.algoliaConfig,
+        companies: state.companies,
+        jobsByCompany: state.jobsByCompany,
+        matchResults: state.matchResults,
+        reviewQueue: state.reviewQueue,
+        appliedJobs: state.appliedJobs,
+        skippedJobs: state.skippedJobs,
+        savedAt: new Date().toISOString(),
+      },
+    });
+  }, 1000);
+}
 
 console.log("[DirectoryApply:SW] Service worker started");
